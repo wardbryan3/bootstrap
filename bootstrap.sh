@@ -104,13 +104,23 @@ apply_dotfiles() {
   ' sh "$SOURCE_DIR" "$PROFILE" "$work_answer" "$DOTFILES_URL"
 }
 
+# The manual steps are the last thing on screen: print them after everything else has finished.
+finish() {
+  echo "Bootstrap finished."
+  if [ -f "$SOURCE_DIR/scripts/checklist.sh" ]; then
+    sh "$SOURCE_DIR/scripts/checklist.sh"
+  else
+    echo "Open a new terminal. Manual steps: run claude and pi once and sign in, join Tailscale, then run 'just secrets' in $SOURCE_DIR."
+  fi
+}
+
 main() {
   parse_flags "$@" || exit $?
   os=$(detect_os)
   install_prereqs "$os"
   install_mise
   apply_dotfiles
-  echo "Bootstrap finished. Open a new terminal, then follow the checklist printed above."
+  finish
 }
 
 if [ -z "${BOOTSTRAP_SOURCE_ONLY:-}" ]; then
