@@ -27,11 +27,20 @@ cat > "$tmp/bin/gh" <<'EOT'
 echo "gh $*" >> "$FAKE_LOG"
 case "$1 $2" in
   "auth status") [ "${FAKE_GH_LOGGED_IN:-1}" = 1 ]; exit $? ;;
-  "repo clone") exec git clone -q "$FAKE_REMOTE" "$4" ;;
 esac
 exit 0
 EOT
 chmod +x "$tmp/bin/gh"
+
+# fake git: logs the call, then runs the real git. The clone must use https with gh's credentials for that one
+# command; gh repo clone follows gh's own protocol setting, which can be ssh and then writes ~/.ssh/known_hosts.
+real_git=$(command -v git)
+cat > "$tmp/bin/git" <<EOT
+#!/bin/sh
+echo "git \$*" >> "\$FAKE_LOG"
+exec "$real_git" "\$@"
+EOT
+chmod +x "$tmp/bin/git"
 
 # the "remote": a Dotfiles repo whose fake entry records how it was called
 mkdir -p "$tmp/remote/scripts"
@@ -44,6 +53,8 @@ git -C "$tmp/remote" add -A && git -C "$tmp/remote" commit -q -m one
 
 export FAKE_LOG="$log" FAKE_REMOTE="$tmp/remote" HOME="$tmp/home" TMPDIR="$tmp/tmpdir" PATH="$tmp/bin:$PATH"
 SOURCE_DIR="$tmp/home/code/dotfiles"
+# shellcheck disable=SC2034  # read by dry_run
+DOTFILES_URL="$tmp/remote"
 # every step that changes the machine is replaced by a recorder
 detect_os() { echo debian; }
 setup_sudo() { echo setup_sudo >> "$log"; }
@@ -56,7 +67,8 @@ handoff() { echo handoff >> "$log"; }
 : > "$log"
 out=$(main --headless --dry-run 2>&1) || fail "dry run must succeed: $out"
 case "$out" in *"ENTRY from $tmp/tmpdir/"*" args: --profile headless --work false --dry-run") ;; *) fail "wrong entry call: $out" ;; esac
-grep -q "^gh repo clone wardbryan3/dotfiles $tmp/tmpdir/" "$log" || fail "gh must clone into a temp dir: $(cat "$log")"
+grep -q "^git -c credential.https://github.com.helper=!gh auth git-credential clone .*$tmp/remote $tmp/tmpdir/" "$log" || fail "git must clone into a temp dir with gh's credentials: $(cat "$log")"
+grep -q "^gh repo clone" "$log" && fail "gh repo clone may use ssh and write known_hosts: $(cat "$log")"
 for step in setup_sudo install_prereqs install_mise get_checkout handoff; do
   grep -qx "$step" "$log" && fail "dry run must not run $step"
 done
@@ -80,7 +92,7 @@ rm -rf "$SOURCE_DIR"
 rc=0; out=$(FAKE_GH_LOGGED_IN=0 main --headless --dry-run 2>&1) || rc=$?
 [ "$rc" != 0 ] || fail "a signed-out gh must fail the dry run"
 case "$out" in *"gh auth login"*) ;; *) fail "must tell the user to run gh auth login: $out" ;; esac
-grep -q "^gh auth login\|^gh repo clone" "$log" && fail "must not log in or clone: $(cat "$log")"
+grep -q "^gh auth login\|^git .*clone" "$log" && fail "must not log in or clone: $(cat "$log")"
 
 # 4. no checkout and no gh at all
 rc=0; out=$(PATH="$tmp/nobin" main --headless --dry-run 2>&1) || rc=$?
