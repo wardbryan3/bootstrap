@@ -104,10 +104,12 @@ apply_dotfiles() {
   ' sh "$SOURCE_DIR" "$PROFILE" "$work_answer" "$DOTFILES_URL"
 }
 
-# The manual steps are the last thing on screen: print them after everything else has finished.
+# finish.sh joins Tailscale, runs the Secrets step, then prints the manual steps last.
 finish() {
   echo "Bootstrap finished."
-  if [ -f "$SOURCE_DIR/scripts/checklist.sh" ]; then
+  if [ -f "$SOURCE_DIR/scripts/finish.sh" ]; then
+    sh "$SOURCE_DIR/scripts/finish.sh"
+  elif [ -f "$SOURCE_DIR/scripts/checklist.sh" ]; then
     sh "$SOURCE_DIR/scripts/checklist.sh"
   else
     echo "Open a new terminal. Manual steps: run claude and pi once and sign in, join Tailscale, then run 'just secrets' in $SOURCE_DIR."

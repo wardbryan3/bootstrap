@@ -30,7 +30,11 @@ SOURCE_DIR="$fin_dir"
 out=$(finish)
 [ "$(printf '%s\n' "$out" | head -n 1)" = "Bootstrap finished." ] || fail "finish must print the closing line first"
 [ "$(printf '%s\n' "$out" | tail -n 1)" = "CHECKLIST-LAST" ] || fail "the checklist must be the last output"
-rm -f "$fin_dir/scripts/checklist.sh"
+printf 'echo FINISH-LAST\n' > "$fin_dir/scripts/finish.sh"
+out=$(finish)
+[ "$(printf '%s\n' "$out" | tail -n 1)" = "FINISH-LAST" ] || fail "finish.sh must win over checklist.sh and be last"
+printf '%s\n' "$out" | grep -q CHECKLIST-LAST && fail "checklist.sh must not run when finish.sh exists"
+rm -f "$fin_dir/scripts/finish.sh" "$fin_dir/scripts/checklist.sh"
 out=$(finish)
 printf '%s\n' "$out" | grep -q 'just secrets' || fail "without a checklist script the closing text must name the next step"
 rm -rf "$fin_dir"
