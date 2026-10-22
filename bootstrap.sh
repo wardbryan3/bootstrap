@@ -11,13 +11,16 @@ SOURCE_DIR="$HOME/code/dotfiles"
 
 usage() {
   cat <<'EOF'
-usage: bootstrap.sh (--desktop | --headless) [--work] [--no-sudo-setup]
+usage: bootstrap.sh (--desktop | --headless) [--work] [--no-sudo-setup] [--dry-run]
 
   --desktop   GUI machine: also installs kitty
   --headless  server or VM: terminal tools only
   --work      also installs the work-profile extras
   --no-sudo-setup  keep sudo as it is (by default it asks for the sudo password once and makes sudo
                    passwordless for you via /etc/sudoers.d, so the install never stops for it)
+
+  --dry-run   show what a real run would change on this machine, and change nothing: no sudo, no installs, no
+              sign-ins. Needs git, plus gh signed in unless ~/code/dotfiles already exists (it is then used as is).
 
 Test hook: BOOTSTRAP_LOCAL_REPO=/path/to/dotfiles skips GitHub login and applies that checkout.
 EOF
@@ -27,6 +30,7 @@ parse_flags() {
   PROFILE=""
   WORK=false
   SUDO_SETUP=true
+  DRY_RUN=false
   for arg in "$@"; do
     case "$arg" in
       --desktop)
@@ -37,6 +41,7 @@ parse_flags() {
         PROFILE=headless ;;
       --work) WORK=true ;;
       --no-sudo-setup) SUDO_SETUP=false ;;
+      --dry-run) DRY_RUN=true ;;
       -h|--help) usage; return 0 ;;
       *) echo "error: unknown flag: $arg" >&2; usage >&2; return 2 ;;
     esac
@@ -163,9 +168,31 @@ handoff() {
   exec sh "$SOURCE_DIR/scripts/bootstrap-run.sh" --profile "$PROFILE" --work "$WORK"
 }
 
+# Dry run: the same hand-off, but nothing on the machine changes. No sudo setup, prerequisites or mise; gh is the one
+# already installed, and it is never signed in or wired into git (that rewrites ~/.gitconfig, which is being previewed).
+# With no checkout yet, one is cloned into a temp dir and removed afterwards. The entry's exit code is returned.
+dry_run() {
+  checkout="$SOURCE_DIR"
+  cleanup=""
+  if [ -d "$SOURCE_DIR/.git" ]; then
+    echo "Using the existing checkout at $SOURCE_DIR as it is (not updated)."
+  else
+    command -v gh >/dev/null 2>&1 || { echo "error: --dry-run needs gh, or a checkout at $SOURCE_DIR" >&2; exit 1; }
+    gh auth status >/dev/null 2>&1 || { echo "error: --dry-run needs gh signed in (run: gh auth login) or a checkout at $SOURCE_DIR" >&2; exit 1; }
+    cleanup=$(mktemp -d "${TMPDIR:-/tmp}/bootstrap-dry-run.XXXXXX")
+    gh repo clone "$GITHUB_USER/dotfiles" "$cleanup/dotfiles" || { rm -rf "$cleanup"; exit 1; }
+    checkout="$cleanup/dotfiles"
+  fi
+  rc=0
+  sh "$checkout/scripts/bootstrap-run.sh" --profile "$PROFILE" --work "$WORK" --dry-run || rc=$?
+  [ -z "$cleanup" ] || rm -rf "$cleanup"
+  exit "$rc"
+}
+
 main() {
   parse_flags "$@" || exit $?
-  os=$(detect_os)
+  os=$(detect_os) || exit 1
+  if [ "$DRY_RUN" = true ]; then dry_run; fi
   setup_sudo
   install_prereqs "$os"
   install_mise
