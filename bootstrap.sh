@@ -79,6 +79,7 @@ detect_os() {
 }
 
 # Ask for the sudo password once and make sudo passwordless for this user, so nothing later stops for it.
+# If sudo is already passwordless for this user, it asks for nothing and changes nothing.
 # The drop-in is checked with visudo first. Remove it with: sudo rm /etc/sudoers.d/90-bootstrap-<user>
 # If the rule does not take effect (no includedir), keep the sudo timestamp alive for this run instead.
 setup_sudo() {
@@ -95,6 +96,14 @@ setup_sudo() {
     ''|*[!a-z0-9_-]*|[!a-z_]*) echo "unusual user name '$user': skipping the passwordless sudo setup." >&2; return 0 ;;
   esac
   sudoers_file="${SUDOERS_DIR:-/etc/sudoers.d}/90-bootstrap-$user"
+  # Already passwordless (a NOPASSWD rule from an earlier run or from elsewhere)? Then there is nothing to ask or write.
+  # The cached timestamp is dropped first, so only a real NOPASSWD rule counts. "sudo -v" is not used for this test:
+  # it still asks for a password when any other matching rule (such as the installer's "%wheel ALL=(ALL) ALL") needs one.
+  "$sudo_bin" -k
+  if "$sudo_bin" -n true 2>/dev/null; then
+    echo "sudo is already passwordless for $user: no password needed."
+    return 0
+  fi
   echo "Sudo password needed once. This also makes sudo passwordless for $user (undo: sudo rm $sudoers_file)."
   "$sudo_bin" -v || { echo "error: sudo is required" >&2; exit 1; }
   if ! "$sudo_bin" test -f "$sudoers_file"; then

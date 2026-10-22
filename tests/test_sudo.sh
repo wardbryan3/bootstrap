@@ -61,4 +61,21 @@ case "$1" in -n) exit 1 ;; test) shift; test "$@" ;; install) exit 1 ;; *) exit 
 FAKE
 chmod +x "$tmp/sudo2"
 SUDO_BIN="$tmp/sudo2" setup_sudo >/dev/null 2>&1 || fail "fallback must not fail"
+# Already passwordless (sudo -n works), but "sudo -v" would still ask, as when a "%wheel ALL=(ALL) ALL" rule also matches:
+# no prompt, no sudoers file written, and it says so.
+# (Some shells keep the VAR=x prefix of an earlier function call, so reset what those calls set.)
+unset BOOTSTRAP_LOCAL_REPO; BOOTSTRAP_USER=alice; BOOTSTRAP_UID=1000; SUDO_SETUP=true
+rm -f "$f"; : > "$tmp/log"
+cat > "$tmp/sudo3" <<'FAKE'
+#!/bin/sh
+echo "$*" >> "$FAKE_SUDO_LOG"
+case "$1" in -n) exit 0 ;; -k) exit 0 ;; -v) echo "FAKE: password required" >&2; exit 1 ;; test) shift; test "$@" ;; install) exit 1 ;; *) exit 0 ;; esac
+FAKE
+chmod +x "$tmp/sudo3"
+out=$(SUDO_BIN="$tmp/sudo3" setup_sudo 2>&1) || fail "an already passwordless sudo must not fail"
+grep -q '^-v' "$tmp/log" && fail "an already passwordless sudo must not run sudo -v"
+grep -q '^install' "$tmp/log" && fail "an already passwordless sudo must not write a sudoers file"
+case "$out" in *"Sudo password needed"*) fail "must not announce a password prompt: $out" ;; esac
+case "$out" in *"already passwordless"*) ;; *) fail "must say sudo is already passwordless: $out" ;; esac
+[ ! -f "$f" ] || fail "no drop-in may be written when sudo is already passwordless"
 echo "PASS: sudo"
