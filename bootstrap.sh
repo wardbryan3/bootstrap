@@ -79,6 +79,21 @@ install_mise() {
   command -v mise >/dev/null 2>&1 || curl -fsSL https://mise.run | sh
 }
 
+# All sign-ins happen here, before the long install, so you can walk away afterwards.
+# The script is sourced (not run) so BW_SESSION stays in this process and reaches the install and finish.
+preauth() {
+  if [ -f "$SOURCE_DIR/scripts/preauth.sh" ]; then
+    # set -e is off while it runs: some shells exit on a failing sourced script even inside a "||" list.
+    set +e
+    # shellcheck disable=SC1091
+    . "$SOURCE_DIR/scripts/preauth.sh"
+    preauth_rc=$?
+    set -e
+    [ "$preauth_rc" = 0 ] || echo "preauth had a problem; the sign-ins will be asked at the end instead." >&2
+  fi
+  return 0
+}
+
 apply_dotfiles() {
   work_answer=$WORK
   mkdir -p "$HOME/code"
@@ -89,8 +104,10 @@ apply_dotfiles() {
       exit 1
     fi
     cp -R "$BOOTSTRAP_LOCAL_REPO" "$SOURCE_DIR"
-    mise x chezmoi@latest -- chezmoi init --source "$SOURCE_DIR" --apply \
+    mise x chezmoi@latest -- chezmoi init --source "$SOURCE_DIR" \
       --promptChoice "Profile=$PROFILE" --promptBool "Work profile=$work_answer"
+    preauth
+    mise x chezmoi@latest -- chezmoi apply
     return
   fi
   # The inner script is single-quoted on purpose: $1..$4 expand in the inner shell.
@@ -99,9 +116,11 @@ apply_dotfiles() {
     set -eu
     gh auth status >/dev/null 2>&1 || gh auth login --git-protocol https --web
     gh auth setup-git
-    chezmoi init --source "$1" --apply \
+    chezmoi init --source "$1" \
       --promptChoice "Profile=$2" --promptBool "Work profile=$3" "$4"
   ' sh "$SOURCE_DIR" "$PROFILE" "$work_answer" "$DOTFILES_URL"
+  preauth
+  mise x gh@latest chezmoi@latest -- chezmoi apply
 }
 
 # finish.sh joins Tailscale, runs the Secrets step, then prints the manual steps last.

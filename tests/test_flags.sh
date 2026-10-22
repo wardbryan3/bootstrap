@@ -22,6 +22,19 @@ if parse_flags --bogus 2>/dev/null; then fail "unknown flag must fail"; fi
 [ "$(detect_os_from linux arch)" = arch ]    || fail "arch"
 if detect_os_from linux fedora >/dev/null 2>&1; then fail "fedora unsupported"; fi
 
+# preauth: sourced into this shell, so what it exports is visible afterwards; a failing script does not stop us.
+pre_dir=$(mktemp -d)
+mkdir -p "$pre_dir/scripts"
+printf 'export PREAUTH_RAN=yes\n' > "$pre_dir/scripts/preauth.sh"
+SOURCE_DIR="$pre_dir"
+preauth
+[ "${PREAUTH_RAN:-}" = yes ] || fail "preauth must be sourced so its exports reach this shell"
+printf 'false\n' > "$pre_dir/scripts/preauth.sh"
+preauth 2>/dev/null || fail "a failing preauth must not stop the bootstrap"
+rm -f "$pre_dir/scripts/preauth.sh"
+preauth || fail "no preauth script is fine"
+rm -rf "$pre_dir"
+
 # finish: the closing line comes first and the checklist from the dotfiles checkout is the very last output.
 fin_dir=$(mktemp -d)
 mkdir -p "$fin_dir/scripts"
