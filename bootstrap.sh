@@ -170,7 +170,7 @@ handoff() {
 
 # Dry run: the same hand-off, but nothing on the machine changes. No sudo setup, prerequisites or mise; gh is the one
 # already installed, and it is never signed in or wired into git (that rewrites ~/.gitconfig, which is being previewed).
-# With no checkout yet, one is cloned into a temp dir and removed afterwards. The entry's exit code is returned.
+# With no checkout yet, one is cloned into a temp dir and removed afterwards (over https, so ~/.ssh is untouched). The entry's exit code is returned.
 dry_run() {
   checkout="$SOURCE_DIR"
   cleanup=""
@@ -180,7 +180,9 @@ dry_run() {
     command -v gh >/dev/null 2>&1 || { echo "error: --dry-run needs gh, or a checkout at $SOURCE_DIR" >&2; exit 1; }
     gh auth status >/dev/null 2>&1 || { echo "error: --dry-run needs gh signed in (run: gh auth login) or a checkout at $SOURCE_DIR" >&2; exit 1; }
     cleanup=$(mktemp -d "${TMPDIR:-/tmp}/bootstrap-dry-run.XXXXXX")
-    gh repo clone "$GITHUB_USER/dotfiles" "$cleanup/dotfiles" || { rm -rf "$cleanup"; exit 1; }
+    # https with gh's credentials for this one command: nothing is written to ~/.gitconfig, and gh repo clone is avoided
+    # because it follows gh's own protocol setting (ssh would add github.com to ~/.ssh/known_hosts).
+    git -c "credential.https://github.com.helper=!gh auth git-credential" clone "$DOTFILES_URL" "$cleanup/dotfiles" || { rm -rf "$cleanup"; exit 1; }
     checkout="$cleanup/dotfiles"
   fi
   rc=0
