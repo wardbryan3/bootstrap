@@ -94,6 +94,11 @@ preauth() {
   return 0
 }
 
+# The install runs third-party installers (curl | sh, npm), so it must not inherit the Vault session token.
+run_apply() {
+  env -u BW_SESSION mise x "$@" -- chezmoi apply
+}
+
 apply_dotfiles() {
   work_answer=$WORK
   mkdir -p "$HOME/code"
@@ -107,7 +112,7 @@ apply_dotfiles() {
     mise x chezmoi@latest -- chezmoi init --source "$SOURCE_DIR" \
       --promptChoice "Profile=$PROFILE" --promptBool "Work profile=$work_answer"
     preauth
-    mise x chezmoi@latest -- chezmoi apply
+    run_apply chezmoi@latest
     return
   fi
   # The inner script is single-quoted on purpose: $1..$4 expand in the inner shell.
@@ -120,7 +125,7 @@ apply_dotfiles() {
       --promptChoice "Profile=$2" --promptBool "Work profile=$3" "$4"
   ' sh "$SOURCE_DIR" "$PROFILE" "$work_answer" "$DOTFILES_URL"
   preauth
-  mise x gh@latest chezmoi@latest -- chezmoi apply
+  run_apply gh@latest chezmoi@latest
 }
 
 # finish.sh joins Tailscale, runs the Secrets step, then prints the manual steps last.

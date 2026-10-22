@@ -35,6 +35,18 @@ rm -f "$pre_dir/scripts/preauth.sh"
 preauth || fail "no preauth script is fine"
 rm -rf "$pre_dir"
 
+# run_apply: the install must not see the Vault session token, but this shell keeps it for finish.
+mise_dir=$(mktemp -d)
+printf '#!/bin/sh\necho "apply sees: ${BW_SESSION:-unset}"\n' > "$mise_dir/mise"
+chmod +x "$mise_dir/mise"
+BW_SESSION=tok-for-test
+export BW_SESSION
+out=$(PATH="$mise_dir:$PATH" run_apply chezmoi@latest)
+[ "$out" = "apply sees: unset" ] || fail "the install must not inherit BW_SESSION, got: $out"
+[ "$BW_SESSION" = tok-for-test ] || fail "this shell must keep BW_SESSION for finish"
+unset BW_SESSION
+rm -rf "$mise_dir"
+
 # finish: the closing line comes first and the checklist from the dotfiles checkout is the very last output.
 fin_dir=$(mktemp -d)
 mkdir -p "$fin_dir/scripts"
