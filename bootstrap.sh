@@ -10,11 +10,13 @@ SOURCE_DIR="$HOME/code/dotfiles"
 
 usage() {
   cat <<'EOF'
-usage: bootstrap.sh (--desktop | --headless) [--work]
+usage: bootstrap.sh (--desktop | --headless) [--work] [--no-sudo-setup]
 
   --desktop   GUI machine: also installs kitty
   --headless  server or VM: terminal tools only
   --work      also installs the work-profile extras
+  --no-sudo-setup  keep sudo as it is (by default it asks for the sudo password once and makes sudo
+                   passwordless for you via /etc/sudoers.d, so the install never stops for it)
 
 Test hook: BOOTSTRAP_LOCAL_REPO=/path/to/dotfiles skips GitHub login and applies that checkout.
 EOF
@@ -23,6 +25,7 @@ EOF
 parse_flags() {
   PROFILE=""
   WORK=false
+  SUDO_SETUP=true
   for arg in "$@"; do
     case "$arg" in
       --desktop)
@@ -32,6 +35,7 @@ parse_flags() {
         [ -z "$PROFILE" ] || [ "$PROFILE" = headless ] || { echo "error: choose one of --desktop or --headless" >&2; return 2; }
         PROFILE=headless ;;
       --work) WORK=true ;;
+      --no-sudo-setup) SUDO_SETUP=false ;;
       -h|--help) usage; return 0 ;;
       *) echo "error: unknown flag: $arg" >&2; usage >&2; return 2 ;;
     esac
@@ -60,6 +64,44 @@ detect_os() {
     id=$(. /etc/os-release && echo "$ID")
   fi
   detect_os_from "$kernel" "$id"
+}
+
+# Ask for the sudo password once and make sudo passwordless for this user, so nothing later stops for it.
+# The drop-in is checked with visudo first. Remove it with: sudo rm /etc/sudoers.d/90-bootstrap-<user>
+# If the rule does not take effect (no includedir), keep the sudo timestamp alive for this run instead.
+setup_sudo() {
+  [ "$SUDO_SETUP" = true ] || return 0
+  [ -z "${BOOTSTRAP_LOCAL_REPO:-}" ] || return 0
+  [ "${BOOTSTRAP_UID:-$(id -u)}" != 0 ] || return 0
+  sudo_bin="${SUDO_BIN:-sudo}"
+  if ! command -v "$sudo_bin" >/dev/null 2>&1; then
+    echo "sudo is not installed: skipping the passwordless sudo setup." >&2
+    return 0
+  fi
+  user="${BOOTSTRAP_USER:-$(id -un)}"
+  case "$user" in
+    ''|*[!a-z0-9_-]*|[!a-z_]*) echo "unusual user name '$user': skipping the passwordless sudo setup." >&2; return 0 ;;
+  esac
+  sudoers_file="${SUDOERS_DIR:-/etc/sudoers.d}/90-bootstrap-$user"
+  echo "Sudo password needed once. This also makes sudo passwordless for $user (undo: sudo rm $sudoers_file)."
+  "$sudo_bin" -v || { echo "error: sudo is required" >&2; exit 1; }
+  if ! "$sudo_bin" test -f "$sudoers_file"; then
+    sudoers_tmp=$(mktemp)
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" > "$sudoers_tmp"
+    if "$sudo_bin" visudo -cf "$sudoers_tmp" >/dev/null && "$sudo_bin" install -m 0440 -o root "$sudoers_tmp" "$sudoers_file"; then
+      :
+    else
+      echo "could not install $sudoers_file." >&2
+    fi
+    rm -f "$sudoers_tmp"
+  fi
+  "$sudo_bin" -k
+  if "$sudo_bin" -n true 2>/dev/null; then
+    return 0
+  fi
+  echo "Passwordless sudo is not in effect; keeping the sudo password cached for this run instead."
+  "$sudo_bin" -v || { echo "error: sudo is required" >&2; exit 1; }
+  ( while kill -0 "$$" 2>/dev/null; do "$sudo_bin" -n true 2>/dev/null || true; sleep 50; done ) >/dev/null 2>&1 </dev/null &
 }
 
 install_prereqs() {
@@ -143,6 +185,7 @@ finish() {
 main() {
   parse_flags "$@" || exit $?
   os=$(detect_os)
+  setup_sudo
   install_prereqs "$os"
   install_mise
   apply_dotfiles
