@@ -22,5 +22,10 @@ if parse_flags --bogus 2>/dev/null; then fail "unknown flag must fail"; fi
 [ "$(detect_os_from linux debian)" = debian ] || fail "debian"
 [ "$(detect_os_from linux arch)" = arch ]    || fail "arch"
 if detect_os_from linux fedora >/dev/null 2>&1; then fail "fedora unsupported"; fi
+[ "$(detect_os_from linux cachyos arch)" = arch ]          || fail "cachyos (ID_LIKE=arch) maps to arch"
+[ "$(detect_os_from linux manjaro 'archlinux arch')" = arch ] || fail "arch among several ID_LIKE words"
+[ "$(detect_os_from linux ubuntu debian)" = debian ]       || fail "ID wins over ID_LIKE"
+if detect_os_from linux fedora 'rhel fedora' >/dev/null 2>&1; then fail "fedora with ID_LIKE still unsupported"; fi
+if detect_os_from linux other notarch >/dev/null 2>&1; then fail "ID_LIKE must match a whole word"; fi
 
 echo "PASS: flags"

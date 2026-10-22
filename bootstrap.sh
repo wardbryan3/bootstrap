@@ -44,14 +44,18 @@ parse_flags() {
   [ -n "$PROFILE" ] || { echo "error: --desktop or --headless is required" >&2; usage >&2; return 2; }
 }
 
-# detect_os_from <uname-lowercase> <os-release-id>: prints macos, debian or arch.
+# detect_os_from <uname-lowercase> <os-release-id> [<os-release-id-like>]: prints macos, debian or arch.
+# ID decides first. ID_LIKE (a space-separated list) only rescues an Arch derivative such as CachyOS.
 detect_os_from() {
   case "$1" in
     darwin) echo macos ;;
     linux)
       case "$2" in
-        debian|ubuntu) echo debian ;;
-        arch) echo arch ;;
+        debian|ubuntu) echo debian; return 0 ;;
+        arch) echo arch; return 0 ;;
+      esac
+      case " ${3:-} " in
+        *" arch "*) echo arch ;;
         *) echo "error: unsupported Linux distribution: $2" >&2; return 1 ;;
       esac ;;
     *) echo "error: unsupported OS: $1" >&2; return 1 ;;
@@ -61,10 +65,12 @@ detect_os_from() {
 detect_os() {
   kernel=$(uname -s | tr '[:upper:]' '[:lower:]')
   id=""
+  id_like=""
   if [ -r /etc/os-release ]; then
     id=$(. /etc/os-release && echo "$ID")
+    id_like=$(. /etc/os-release && echo "${ID_LIKE:-}")
   fi
-  detect_os_from "$kernel" "$id"
+  detect_os_from "$kernel" "$id" "$id_like"
 }
 
 # Ask for the sudo password once and make sudo passwordless for this user, so nothing later stops for it.
@@ -113,7 +119,8 @@ install_prereqs() {
       sudo apt-get update
       sudo apt-get install -y git curl ca-certificates ;;
     arch)
-      sudo pacman -S --needed --noconfirm git curl ca-certificates ;;
+      # -Syu, not -S: Arch is rolling, so installing from a stale database can leave a partial upgrade.
+      sudo pacman -Syu --needed --noconfirm git curl ca-certificates ;;
   esac
 }
 
