@@ -1,5 +1,6 @@
 #!/bin/sh
-# Bootstrap stub: gets a wiped machine from nothing to a chezmoi-applied environment.
+# Bootstrap stub: does only what must run before a clone exists (flags, sudo, prereqs, mise, the GitHub login, the
+# clone), then hands off to scripts/bootstrap-run.sh in the dotfiles checkout, which does the rest.
 # Usage: sh -c "$(curl -fsSL https://raw.githubusercontent.com/wardbryan3/bootstrap/main/bootstrap.sh)" -- --headless
 # (Use the sh -c form, not "curl | sh", so gh can prompt on your terminal.)
 set -eu
@@ -121,65 +122,38 @@ install_mise() {
   command -v mise >/dev/null 2>&1 || curl -fsSL https://mise.run | sh
 }
 
-# All sign-ins happen here, before the long install, so you can walk away afterwards.
-# The script is sourced (not run) so BW_SESSION stays in this process and reaches the install and finish.
-preauth() {
-  if [ -f "$SOURCE_DIR/scripts/preauth.sh" ]; then
-    # set -e is off while it runs: some shells exit on a failing sourced script even inside a "||" list.
-    set +e
-    # shellcheck disable=SC1091
-    . "$SOURCE_DIR/scripts/preauth.sh"
-    preauth_rc=$?
-    set -e
-    [ "$preauth_rc" = 0 ] || echo "preauth had a problem; the sign-ins will be asked at the end instead." >&2
-  fi
-  return 0
-}
-
-# The install runs third-party installers (curl | sh, npm), so it must not inherit the Vault session token.
-run_apply() {
-  env -u BW_SESSION mise x "$@" -- chezmoi apply
-}
-
-apply_dotfiles() {
-  work_answer=$WORK
+# Put the dotfiles checkout in $SOURCE_DIR. On a re-run an existing checkout is only fast-forwarded; if that fails
+# (local edits, diverged history) it warns and carries on with the checkout as it is.
+# Test mode: BOOTSTRAP_LOCAL_REPO=/path/to/dotfiles copies that checkout instead (no GitHub login, no clone).
+get_checkout() {
   mkdir -p "$HOME/code"
   if [ -n "${BOOTSTRAP_LOCAL_REPO:-}" ]; then
-    # Test mode: copy the local checkout instead of cloning the private repo.
     if [ -e "$SOURCE_DIR" ]; then
       echo "error: test mode refuses to overwrite existing $SOURCE_DIR" >&2
       exit 1
     fi
     cp -R "$BOOTSTRAP_LOCAL_REPO" "$SOURCE_DIR"
-    mise x chezmoi@latest -- chezmoi init --source "$SOURCE_DIR" \
-      --promptChoice "Profile=$PROFILE" --promptBool "Work profile=$work_answer"
-    preauth
-    run_apply chezmoi@latest
-    return
+    return 0
   fi
-  # The inner script is single-quoted on purpose: $1..$4 expand in the inner shell.
+  # gh must be on PATH while git runs: setup-git makes it git's credential helper.
+  # The inner script is single-quoted on purpose: $1 and $2 expand in the inner shell.
   # shellcheck disable=SC2016
-  mise x gh@latest chezmoi@latest -- sh -c '
+  mise x gh@latest -- sh -c '
     set -eu
     gh auth status >/dev/null 2>&1 || gh auth login --git-protocol https --web
     gh auth setup-git
-    chezmoi init --source "$1" \
-      --promptChoice "Profile=$2" --promptBool "Work profile=$3" "$4"
-  ' sh "$SOURCE_DIR" "$PROFILE" "$work_answer" "$DOTFILES_URL"
-  preauth
-  run_apply gh@latest chezmoi@latest
+    if [ -d "$1/.git" ]; then
+      git -C "$1" pull --ff-only || echo "warning: could not update $1; continuing with the checkout as it is" >&2
+    else
+      git clone "$2" "$1"
+    fi
+  ' sh "$SOURCE_DIR" "$DOTFILES_URL"
 }
 
-# finish.sh joins Tailscale, runs the Secrets step, then prints the manual steps last.
-finish() {
-  echo "Bootstrap finished."
-  if [ -f "$SOURCE_DIR/scripts/finish.sh" ]; then
-    sh "$SOURCE_DIR/scripts/finish.sh"
-  elif [ -f "$SOURCE_DIR/scripts/checklist.sh" ]; then
-    sh "$SOURCE_DIR/scripts/checklist.sh"
-  else
-    echo "Open a new terminal. Manual steps: run claude and pi once and sign in, join Tailscale, then run 'just secrets' in $SOURCE_DIR."
-  fi
+# Everything after the clone (chezmoi init, the sign-ins, the apply, the finish) lives in the dotfiles repo.
+# exec: this process becomes the entry, so its exit code is the Bootstrap's.
+handoff() {
+  exec sh "$SOURCE_DIR/scripts/bootstrap-run.sh" --profile "$PROFILE" --work "$WORK"
 }
 
 main() {
@@ -188,8 +162,8 @@ main() {
   setup_sudo
   install_prereqs "$os"
   install_mise
-  apply_dotfiles
-  finish
+  get_checkout
+  handoff
 }
 
 if [ -z "${BOOTSTRAP_SOURCE_ONLY:-}" ]; then

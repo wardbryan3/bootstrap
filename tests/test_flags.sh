@@ -1,7 +1,8 @@
 #!/bin/sh
-# Source bootstrap.sh without running main, then exercise its pure functions.
+# Source bootstrap.sh without running main, then exercise its pure functions (flags and OS detection).
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=../bootstrap.sh
 BOOTSTRAP_SOURCE_ONLY=1 . "$here/bootstrap.sh"
 
 fail() { echo "FAIL: $1"; exit 1; }
@@ -22,45 +23,4 @@ if parse_flags --bogus 2>/dev/null; then fail "unknown flag must fail"; fi
 [ "$(detect_os_from linux arch)" = arch ]    || fail "arch"
 if detect_os_from linux fedora >/dev/null 2>&1; then fail "fedora unsupported"; fi
 
-# preauth: sourced into this shell, so what it exports is visible afterwards; a failing script does not stop us.
-pre_dir=$(mktemp -d)
-mkdir -p "$pre_dir/scripts"
-printf 'export PREAUTH_RAN=yes\n' > "$pre_dir/scripts/preauth.sh"
-SOURCE_DIR="$pre_dir"
-preauth
-[ "${PREAUTH_RAN:-}" = yes ] || fail "preauth must be sourced so its exports reach this shell"
-printf 'false\n' > "$pre_dir/scripts/preauth.sh"
-preauth 2>/dev/null || fail "a failing preauth must not stop the bootstrap"
-rm -f "$pre_dir/scripts/preauth.sh"
-preauth || fail "no preauth script is fine"
-rm -rf "$pre_dir"
-
-# run_apply: the install must not see the Vault session token, but this shell keeps it for finish.
-mise_dir=$(mktemp -d)
-printf '#!/bin/sh\necho "apply sees: ${BW_SESSION:-unset}"\n' > "$mise_dir/mise"
-chmod +x "$mise_dir/mise"
-BW_SESSION=tok-for-test
-export BW_SESSION
-out=$(PATH="$mise_dir:$PATH" run_apply chezmoi@latest)
-[ "$out" = "apply sees: unset" ] || fail "the install must not inherit BW_SESSION, got: $out"
-[ "$BW_SESSION" = tok-for-test ] || fail "this shell must keep BW_SESSION for finish"
-unset BW_SESSION
-rm -rf "$mise_dir"
-
-# finish: the closing line comes first and the checklist from the dotfiles checkout is the very last output.
-fin_dir=$(mktemp -d)
-mkdir -p "$fin_dir/scripts"
-printf 'echo CHECKLIST-LAST\n' > "$fin_dir/scripts/checklist.sh"
-SOURCE_DIR="$fin_dir"
-out=$(finish)
-[ "$(printf '%s\n' "$out" | head -n 1)" = "Bootstrap finished." ] || fail "finish must print the closing line first"
-[ "$(printf '%s\n' "$out" | tail -n 1)" = "CHECKLIST-LAST" ] || fail "the checklist must be the last output"
-printf 'echo FINISH-LAST\n' > "$fin_dir/scripts/finish.sh"
-out=$(finish)
-[ "$(printf '%s\n' "$out" | tail -n 1)" = "FINISH-LAST" ] || fail "finish.sh must win over checklist.sh and be last"
-printf '%s\n' "$out" | grep -q CHECKLIST-LAST && fail "checklist.sh must not run when finish.sh exists"
-rm -f "$fin_dir/scripts/finish.sh" "$fin_dir/scripts/checklist.sh"
-out=$(finish)
-printf '%s\n' "$out" | grep -q 'just secrets' || fail "without a checklist script the closing text must name the next step"
-rm -rf "$fin_dir"
 echo "PASS: flags"
